@@ -1,0 +1,183 @@
+# Blender Python: Fixed MorphoDrone with rotating props + full colors
+import bpy, math
+
+# -------------------------
+# Clear scene
+# -------------------------
+bpy.ops.object.select_all(action='SELECT')
+bpy.ops.object.delete(use_global=False)
+
+def make_mat(name, base, metallic=0.2, rough=0.35, emit=0.0):
+    m = bpy.data.materials.new(name)
+    m.use_nodes = True
+    nodes = m.node_tree.nodes
+    links = m.node_tree.links
+    for n in nodes: nodes.remove(n)
+    out = nodes.new("ShaderNodeOutputMaterial")
+    bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+    bsdf.inputs["Base Color"].default_value = (*base, 1)
+    bsdf.inputs["Metallic"].default_value = metallic
+    bsdf.inputs["Roughness"].default_value = rough
+    if emit > 0:
+        emi = nodes.new("ShaderNodeEmission")
+        emi.inputs["Color"].default_value = (*base, 1)
+        emi.inputs["Strength"].default_value = emit
+        mix = nodes.new("ShaderNodeAddShader")
+        links.new(bsdf.outputs["BSDF"], mix.inputs[0])
+        links.new(emi.outputs["Emission"], mix.inputs[1])
+        links.new(mix.outputs[0], out.inputs["Surface"])
+    else:
+        links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+    return m
+
+# -------------------------
+# Materials
+# -------------------------
+mat_body = make_mat("BodyCarbon",(0.05,0.05,0.05), metallic=0.6, rough=0.3)
+mat_hull = make_mat("HullNavy",(0.02,0.05,0.2), metallic=0.4, rough=0.25)
+mat_motor = make_mat("MotorMetal",(0.6,0.6,0.65), metallic=0.9, rough=0.2)
+mat_prop = make_mat("PropBlack",(0.02,0.02,0.02), metallic=0.1, rough=0.6)
+mat_arm = make_mat("ArmCarbon",(0.08,0.08,0.08), metallic=0.5, rough=0.25)
+mat_thr = make_mat("ThrusterSilver",(0.5,0.5,0.55), metallic=0.8, rough=0.25)
+mat_rescue = make_mat("RescueYellow",(0.9,0.8,0.1), metallic=0.2, rough=0.35)
+mat_led = make_mat("LED",(1,0,0), rough=0.1, emit=5.0)
+
+# -------------------------
+# Drone core
+# -------------------------
+bpy.ops.mesh.primitive_uv_sphere_add(radius=0.55, location=(0,0,0.3))
+body = bpy.context.active_object
+body.name = "Body"
+body.data.materials.append(mat_body)
+bpy.ops.object.shade_smooth()
+
+bpy.ops.mesh.primitive_cylinder_add(radius=0.35, depth=0.6, location=(0,0,-0.05))
+hull = bpy.context.active_object
+hull.name = "Hull"
+hull.data.materials.append(mat_hull)
+bpy.ops.object.shade_smooth()
+
+root = bpy.data.objects.new("DroneRoot", None)
+bpy.context.collection.objects.link(root)
+body.parent = root
+hull.parent = root
+
+# -------------------------
+# Arms + motors + props
+# -------------------------
+arm_pivots, motors, leds = [], [], []
+for i in range(4):
+    angle = math.radians(90*i)
+    px, py = math.cos(angle)*0.6, math.sin(angle)*0.6
+
+    pivot = bpy.data.objects.new(f"ArmPivot_{i}", None)
+    pivot.location = (0,0,0.3)
+    bpy.context.collection.objects.link(pivot)
+    pivot.parent = root
+    arm_pivots.append(pivot)
+
+    # arm
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(px, py, 0.3))
+    arm = bpy.context.active_object
+    arm.scale = (0.9,0.12,0.06)
+    arm.rotation_euler[2] = angle
+    arm.data.materials.append(mat_arm)
+    arm.parent = pivot
+    bpy.ops.object.shade_smooth()
+
+    # motor (knob)
+    mx, my = math.cos(angle)*1.05, math.sin(angle)*1.05
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.1, depth=0.1, location=(mx,my,0.38))
+    motor = bpy.context.active_object
+    motor.data.materials.append(mat_motor)
+    motor.parent = pivot
+    motors.append(motor)
+    bpy.ops.object.shade_smooth()
+
+    # LED
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.05, location=(mx,my,0.52))
+    led = bpy.context.active_object
+    led.data.materials.append(mat_led)
+    led.parent = pivot
+    leds.append(led)
+
+    # prop blades (parented to motor knob)
+    for b in range(3):
+        bpy.ops.mesh.primitive_plane_add(size=0.45, location=(mx,my,0.42))
+        blade = bpy.context.active_object
+        blade.scale.y = 0.05
+        blade.rotation_euler[2] = math.radians(120*b)
+        blade.data.materials.append(mat_prop)
+        blade.parent = motor
+
+# -------------------------
+# Rescue Arm
+# -------------------------
+bpy.ops.mesh.primitive_cylinder_add(radius=0.04, depth=0.7, location=(0,0.9,0.3))
+res_arm = bpy.context.active_object
+res_arm.rotation_euler = (0, math.radians(90), 0)
+res_arm.data.materials.append(mat_rescue)
+res_arm.parent = body
+
+bpy.ops.mesh.primitive_cube_add(size=0.08, location=(0.1,1.2,0.25))
+grip1 = bpy.context.active_object
+grip1.data.materials.append(mat_rescue)
+grip1.parent = res_arm
+
+bpy.ops.mesh.primitive_cube_add(size=0.08, location=(-0.1,1.2,0.25))
+grip2 = bpy.context.active_object
+grip2.data.materials.append(mat_rescue)
+grip2.parent = res_arm
+
+# -------------------------
+# Thrusters
+# -------------------------
+for pos in [(-0.2,0,-0.45),(0.2,0,-0.45)]:
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.08, depth=0.2, location=pos)
+    thr = bpy.context.active_object
+    thr.rotation_euler = (math.radians(90),0,0)
+    thr.data.materials.append(mat_thr)
+    thr.parent = hull
+    bpy.ops.object.shade_smooth()
+
+# -------------------------
+# Lights & Camera
+# -------------------------
+bpy.ops.object.camera_add(location=(3,-3,2), rotation=(math.radians(60),0,math.radians(45)))
+bpy.context.scene.camera = bpy.context.active_object
+bpy.ops.object.light_add(type="SUN", location=(5,5,5))
+
+# -------------------------
+# Animation
+# -------------------------
+scene = bpy.context.scene
+scene.frame_start, scene.frame_end = 1, 240
+
+# Arm folding animation
+for p in arm_pivots:
+    p.rotation_euler = (0,0,0)
+    p.keyframe_insert("rotation_euler", frame=1)
+    p.rotation_euler = (math.radians(80),0,0)
+    p.keyframe_insert("rotation_euler", frame=120)
+    p.rotation_euler = (0,0,0)
+    p.keyframe_insert("rotation_euler", frame=240)
+
+# Propeller rotation
+for m in motors:
+    m.rotation_euler = (0,0,0)
+    m.keyframe_insert("rotation_euler", frame=1)
+    m.rotation_euler = (0,0,math.radians(360*10))  # spin 10 turns
+    m.keyframe_insert("rotation_euler", frame=60)
+    m.rotation_euler = (0,0,math.radians(360*40))  # keep spinning
+    m.keyframe_insert("rotation_euler", frame=240)
+
+# LED color animation
+for led in leds:
+    mat = led.data.materials[0]
+    nodes = mat.node_tree.nodes
+    emi = [n for n in nodes if n.type=="EMISSION"][0]
+    for frame,color in [(1,(1,0,0,1)),(80,(0,1,0,1)),(160,(0,0,1,1)),(240,(1,1,0,1))]:
+        emi.inputs[0].default_value = color
+        emi.inputs[0].keyframe_insert("default_value", frame=frame)
+
+print("✅ MorphoDrone: props rotate, arms fold, LEDs animate, colors applied.")
